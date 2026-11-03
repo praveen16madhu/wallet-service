@@ -1,0 +1,241 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Wallet Service Lessons</title>
+<style>
+  :root{--bg:#f6f7f9;--card:#fff;--ink:#16202c;--muted:#5d6b7a;--line:#dde2e8;--accent:#0f766e;--accent-ink:#fff;--bad:#b42318;--bad-bg:#fdecea;--good:#157347;--good-bg:#e6f4ec;--warn-bg:#fff4db}
+  @media (prefers-color-scheme:dark){:root{--bg:#10151b;--card:#18202a;--ink:#e8edf2;--muted:#9aa8b6;--line:#2a3541;--accent:#2dd4bf;--accent-ink:#06201d;--bad:#ff8a80;--bad-bg:#3a1b19;--good:#7ee0a5;--good-bg:#173424;--warn-bg:#3a2f12}}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.55 system-ui,-apple-system,Segoe UI,sans-serif}
+  header{padding:22px 20px 6px;max-width:1100px;margin:0 auto}
+  h1{margin:0 0 4px;font-size:24px;font-weight:600}
+  header p{margin:0;color:var(--muted)}
+  main{max-width:1100px;margin:0 auto;padding:12px 20px 60px;display:grid;gap:16px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px}
+  .card h2{margin:0 0 2px;font-size:17px;font-weight:600}
+  .tag{display:inline-block;font-size:12px;color:var(--accent);border:1px solid var(--accent);border-radius:999px;padding:1px 9px;margin-bottom:8px}
+  .problem{color:var(--muted);margin:4px 0 12px}
+  .row{display:flex;gap:10px;flex-wrap:wrap;align-items:end;margin:8px 0}
+  label{display:grid;gap:3px;font-size:13px;color:var(--muted)}
+  input,select{font:inherit;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:7px 9px;min-width:130px}
+  button{font:inherit;cursor:pointer;border-radius:8px;border:1px solid var(--accent);background:var(--accent);color:var(--accent-ink);padding:8px 14px}
+  button.secondary{background:transparent;color:var(--accent)}
+  button.danger{background:var(--bad);border-color:var(--bad);color:#fff}
+  button:disabled{opacity:.5;cursor:wait}
+  table{border-collapse:collapse;width:100%;font-size:14px}
+  th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line)}
+  th{color:var(--muted);font-weight:500}
+  .mono{font-family:ui-monospace,Menlo,monospace;font-size:12.5px}
+  .result{margin-top:10px;border-radius:8px;padding:10px 12px;background:var(--bg);border:1px solid var(--line);white-space:pre-wrap}
+  .result.good{background:var(--good-bg);border-color:var(--good)}
+  .result.bad{background:var(--bad-bg);border-color:var(--bad)}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  @media(max-width:800px){.grid2{grid-template-columns:1fr}}
+  .note{font-size:13px;color:var(--muted);background:var(--warn-bg);border-radius:8px;padding:8px 10px;margin-top:8px}
+  .pick{cursor:pointer}.pick:hover{background:var(--bg)}
+</style>
+</head>
+<body>
+<header>
+  <h1>Wallet service: five ways money goes wrong, and the fix for each</h1>
+  <p>Create two accounts, then run each lesson. Every button calls the real API against the real PostgreSQL database.</p>
+</header>
+<main>
+
+<section class="card">
+  <h2>Accounts</h2>
+  <div class="row">
+    <label>Owner<input id="owner" value="Asha"></label>
+    <label>Opening balance<input id="opening" type="number" value="1000" min="0"></label>
+    <button onclick="createAccount()">Create account</button>
+    <button class="secondary" onclick="loadAccounts()">Refresh</button>
+  </div>
+  <table><thead><tr><th>Owner</th><th>Balance</th><th>Id (click to copy into the lessons)</th></tr></thead><tbody id="accounts"></tbody></table>
+  <div id="accErr" class="result bad" style="display:none"></div>
+</section>
+
+<section class="card">
+  <span class="tag">Lesson 1: idempotency</span>
+  <h2>The user taps "Pay" twice</h2>
+  <p class="problem">The phone times out, so the app sends the same deposit again. Without protection the money is added twice. With an Idempotency-Key the server recognises the repeat and replays the first answer.</p>
+  <div class="row">
+    <label>Account<select id="l1acc"></select></label>
+    <label>Amount<input id="l1amt" type="number" value="100"></label>
+    <button class="danger" onclick="lesson1(false)">Send twice, NO key</button>
+    <button onclick="lesson1(true)">Send twice, SAME key</button>
+  </div>
+  <div id="l1out" class="result" style="display:none"></div>
+</section>
+
+<section class="card">
+  <span class="tag">Lesson 2: transactions</span>
+  <h2>The server crashes halfway through a transfer</h2>
+  <p class="problem">A transfer is two steps: take from A, give to B. If the app dies in between, money would vanish. Both steps run in one database transaction, so a crash undoes the debit.</p>
+  <div class="row">
+    <label>From<select id="l2from"></select></label>
+    <label>To<select id="l2to"></select></label>
+    <label>Amount<input id="l2amt" type="number" value="250"></label>
+    <button onclick="lesson2()">Transfer, crash after the debit</button>
+  </div>
+  <div id="l2out" class="result" style="display:none"></div>
+</section>
+
+<section class="card">
+  <span class="tag">Lesson 3: locking</span>
+  <h2>Twenty withdrawals at the same instant</h2>
+  <p class="problem">Each request reads the balance, subtracts, and writes it back. If two read the same number, one subtraction is lost. With locking (SELECT ... FOR UPDATE) requests queue up one at a time and the numbers add up.</p>
+  <div class="row">
+    <label>Account<select id="l3acc"></select></label>
+    <label>Locking<select id="l3mode"><option value="UNSAFE">OFF (unsafe)</option><option value="SAFE">ON (safe)</option></select></label>
+    <label>Work per request (ms)<input id="l3delay" type="number" value="25"></label>
+    <button onclick="lesson3()">Fire 20 withdrawals of 1</button>
+  </div>
+  <div id="l3out" class="result" style="display:none"></div>
+</section>
+
+<section class="card">
+  <span class="tag">Lesson 4: timeouts and retries</span>
+  <h2>The notification service is slow, flaky, or dead</h2>
+  <p class="problem">The wallet calls another service with a 1 second connect timeout and a 1.5 second read timeout, and retries up to 3 times. "Dead" is refused instantly (nobody is listening). "Slow" connects but never answers in time, so the read timeout fires.</p>
+  <div class="row">
+    <button class="secondary" onclick="lesson4('ok')">Healthy</button>
+    <button class="secondary" onclick="lesson4('flaky')">Flaky (fails twice)</button>
+    <button class="secondary" onclick="lesson4('slow')">Slow (5 s)</button>
+    <button class="secondary" onclick="lesson4('fail')">Always 500</button>
+    <button class="secondary" onclick="lesson4('down')">Server down</button>
+  </div>
+  <div id="l4out" class="result" style="display:none"></div>
+</section>
+
+<section class="card">
+  <span class="tag">Lesson 5: Kafka</span>
+  <h2>Events: duplicates and bad messages</h2>
+  <p class="problem">After a transfer commits, an event goes to Kafka. The consumer stores it with the transfer id as primary key, so a redelivered event is ignored. A malformed event goes to a dead-letter topic instead of blocking the queue. These are verified by the automated tests using an embedded broker.</p>
+  <div class="row"><button class="secondary" onclick="lesson5()">Show audited transfers</button></div>
+  <div id="l5out" class="result" style="display:none"></div>
+  <div class="note">Kafka is off by default (no broker is installed). To use it, start a broker and run with <span class="mono">WALLET_KAFKA_ENABLED=true</span>.</div>
+</section>
+
+<section class="card">
+  <h2>Ledger</h2>
+  <div class="row"><label>Account<select id="ledAcc" onchange="loadLedger()"></select></label></div>
+  <table><thead><tr><th>Type</th><th>Amount</th><th>Balance after</th><th>When</th></tr></thead><tbody id="ledger"></tbody></table>
+</section>
+
+</main>
+<script>
+const $ = id => document.getElementById(id);
+let accounts = [];
+const fmt = n => Number(n).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
+
+async function api(path, opts={}) {
+  const res = await fetch('/api'+path, opts);
+  const text = await res.text();
+  let body; try { body = text ? JSON.parse(text) : null } catch { body = text }
+  return {status: res.status, body};
+}
+const post = (path, data, headers={}) => api(path, {method:'POST', headers:{'Content-Type':'application/json', ...headers}, body: data ? JSON.stringify(data) : undefined});
+const show = (id, text, cls='') => { const e=$(id); e.style.display='block'; e.className='result '+cls; e.textContent=text; };
+const name = id => (accounts.find(a=>a.id===id)||{owner:id.slice(0,8)}).owner;
+async function busy(btn, fn){ const all=document.querySelectorAll('button'); all.forEach(b=>b.disabled=true); try{ await fn() } finally { all.forEach(b=>b.disabled=false); await loadAccounts(); } }
+
+async function loadAccounts() {
+  const r = await api('/accounts');
+  accounts = r.body || [];
+  $('accounts').innerHTML = accounts.map(a => `<tr class="pick"><td>${a.owner}</td><td>${fmt(a.balance)}</td><td class="mono">${a.id}</td></tr>`).join('')
+    || '<tr><td colspan="3">No accounts yet. Create two above.</td></tr>';
+  const opts = accounts.map(a => `<option value="${a.id}">${a.owner} (${fmt(a.balance)})</option>`).join('');
+  ['l1acc','l2from','l2to','l3acc','ledAcc'].forEach(id => { const el=$(id), v=el.value; el.innerHTML=opts; if(v) el.value=v; });
+  if (accounts.length > 1 && $('l2to').value === $('l2from').value) $('l2to').selectedIndex = 1;
+  loadLedger();
+}
+async function createAccount() {
+  const r = await post('/accounts', {owner:$('owner').value, initialBalance:Number($('opening').value)});
+  if (r.status !== 201) { show('accErr', r.body.detail || JSON.stringify(r.body), 'bad'); return; }
+  $('accErr').style.display='none'; loadAccounts();
+}
+async function loadLedger() {
+  const id = $('ledAcc').value; if(!id){ $('ledger').innerHTML=''; return; }
+  const r = await api('/accounts/'+id+'/transactions');
+  $('ledger').innerHTML = (r.body||[]).slice(0,15).map(e => `<tr><td>${e.type}</td><td>${fmt(e.amount)}</td><td>${fmt(e.balanceAfter)}</td><td>${new Date(e.createdAt).toLocaleTimeString()}</td></tr>`).join('');
+}
+
+async function lesson1(useKey) {
+  await busy(null, async () => {
+    const id=$('l1acc').value, amount=Number($('l1amt').value);
+    const before=(await api('/accounts/'+id)).body.balance;
+    const key = useKey ? 'tap-'+Math.random().toString(36).slice(2) : null;
+    const h = key ? {'Idempotency-Key':key} : {};
+    const a = await post(`/accounts/${id}/deposit`, {amount}, h);
+    const b = await post(`/accounts/${id}/deposit`, {amount}, h);
+    const after=(await api('/accounts/'+id)).body.balance;
+    const added = after-before, ok = added===amount;
+    show('l1out',
+`Balance before: ${fmt(before)}
+Request 1 -> ${a.status}, balance ${fmt(a.body.balance)}
+Request 2 -> ${b.status}, balance ${fmt(b.body.balance)}   ${useKey?'(replayed answer, nothing was applied again)':''}
+Balance after: ${fmt(after)}   (sent ${fmt(amount)} twice, money added: ${fmt(added)})
+${ok ? 'Correct: charged once.' : 'WRONG: the same payment was applied twice.'}`, ok?'good':'bad');
+  });
+}
+
+async function lesson2() {
+  await busy(null, async () => {
+    const from=$('l2from').value, to=$('l2to').value, amount=Number($('l2amt').value);
+    if (from===to) { show('l2out','Choose two different accounts.','bad'); return; }
+    const r = await api(`/demo/transfer-crash?from=${from}&to=${to}&amount=${amount}`, {method:'POST'});
+    const d=r.body, same = d.fromBefore===d.fromAfter && d.toBefore===d.toAfter;
+    show('l2out',
+`Outcome: ${d.outcome}
+${name(from)}: ${fmt(d.fromBefore)} -> ${fmt(d.fromAfter)}
+${name(to)}: ${fmt(d.toBefore)} -> ${fmt(d.toAfter)}
+${same ? 'Correct: the debit was rolled back, no money vanished.' : 'WRONG: balances changed.'}`, same?'good':'bad');
+  });
+}
+
+async function lesson3() {
+  await busy(null, async () => {
+    const id=$('l3acc').value;
+    await api(`/demo/settings?lockingMode=${$('l3mode').value}&delayMs=${$('l3delay').value}`, {method:'POST'});
+    const r = await api(`/demo/concurrent-withdrawals?accountId=${id}&threads=20&amount=1`, {method:'POST'});
+    const d=r.body;
+    await api('/demo/settings?lockingMode=SAFE&delayMs=0', {method:'POST'});
+    show('l3out',
+`Locking: ${d.lockingMode}
+Start balance: ${fmt(d.startBalance)}
+Withdrawals accepted: ${d.withdrawalsAccepted}, rejected: ${d.withdrawalsRejected}
+Balance should be: ${fmt(d.expectedBalance)}
+Balance actually is: ${fmt(d.actualBalance)}
+${d.moneyLost ? 'WRONG: '+fmt(d.actualBalance-d.expectedBalance)+' of withdrawals were accepted but never subtracted (lost updates).' : 'Correct: every accepted withdrawal was subtracted exactly once.'}
+(settings reset to locking ON afterwards)`, d.moneyLost?'bad':'good');
+  });
+}
+
+async function lesson4(mode) {
+  await busy(null, async () => {
+    show('l4out','Calling the notification service (mode: '+mode+')...');
+    const t0=performance.now();
+    const r = await api('/demo/notify?mode='+mode, {method:'POST'});
+    const d=r.body, total=Math.round(performance.now()-t0);
+    show('l4out',
+`Mode: ${mode}
+Delivered: ${d.delivered}
+Attempts made: ${d.attempts} (max 3)
+Total time: ${total} ms
+${d.delivered ? 'Server said: '+d.detail : 'Gave up. Reason: '+d.detail}`, d.delivered?'good':'bad');
+  });
+}
+
+async function lesson5() {
+  const r = await api('/demo/audit');
+  const rows = r.body || [];
+  show('l5out', rows.length ? rows.map(x=>`${x.transferId.slice(0,8)}  ${fmt(x.amount)}  at ${new Date(x.receivedAt).toLocaleTimeString()}`).join('\n')
+                            : 'No audited transfers (Kafka is off, or no transfer has happened).');
+}
+
+loadAccounts();
+</script>
+</body>
+</html>

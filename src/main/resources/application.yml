@@ -1,0 +1,34 @@
+server:
+  port: ${PORT:8085}
+
+spring:
+  application:
+    name: wallet-service
+  datasource:
+    url: jdbc:postgresql://localhost:5432/wallet
+    username: ${DB_USER:${user.name}}
+    password: ${DB_PASSWORD:}
+  jpa:
+    hibernate:
+      ddl-auto: update
+    open-in-view: false
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP:localhost:9092}
+    consumer:
+      group-id: wallet-audit
+      auto-offset-reset: earliest
+
+wallet:
+  kafka:
+    enabled: false            # set true when a Kafka broker is running
+  notify:
+    url: http://localhost:${server.port}/mock/notify
+  demo:
+    delay-ms: 0               # pause between read and write; the UI raises it to expose races
+
+resilience4j:
+  retry:
+    instances:
+      notify:
+        max-attempts: 3
+        wait-duration: 300ms
